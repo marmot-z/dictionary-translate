@@ -4,6 +4,7 @@ import javassist.CannotCompileException;
 import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.BeanCreationException;
 import org.springframework.beans.factory.config.InstantiationAwareBeanPostProcessor;
+import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
 import priv.zxw.dictranslate.annotation.Dictionary;
@@ -18,7 +19,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
+@Component
 public class DictionaryBeanPostProcessor implements InstantiationAwareBeanPostProcessor {
 
     /**
@@ -65,15 +68,24 @@ public class DictionaryBeanPostProcessor implements InstantiationAwareBeanPostPr
     private List<Class<?>> getMethodReturnTypes(Class<?> clazz) {
         Method[] declaredMethods = clazz.getDeclaredMethods();
 
+        // TODO 解决返回结果为泛型的情况
         List<Class<?>> returnTypes = new ArrayList<>(declaredMethods.length);
         for (Method declaredMethod : declaredMethods) {
             if (isRequestMappingMethod(declaredMethod) &&
                     hasReturnValue(declaredMethod) && isResponseBody(declaredMethod)) {
-                returnTypes.add(declaredMethod.getReturnType());
+                Class<?> returnType = declaredMethod.getReturnType();
+                if (isDictionaryClass(returnType)) {
+                    returnTypes.add(returnType);
+                }
             }
         }
 
         return returnTypes;
+    }
+
+    private boolean isDictionaryClass(Class<?> returnType) {
+        Field[] declaredFields = returnType.getDeclaredFields();
+        return Stream.of(declaredFields).anyMatch(field -> field.isAnnotationPresent(Dictionary.class));
     }
 
     private boolean isRequestMappingMethod(Method declaredMethod) {

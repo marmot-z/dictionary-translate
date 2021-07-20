@@ -9,6 +9,7 @@ import org.springframework.core.MethodParameter;
 import org.springframework.http.MediaType;
 import org.springframework.http.server.ServerHttpRequest;
 import org.springframework.http.server.ServerHttpResponse;
+import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyAdvice;
 import priv.zxw.dictranslate.converter.DictionaryConverter;
 import priv.zxw.dictranslate.entity.DictionaryEntity;
@@ -16,9 +17,12 @@ import priv.zxw.dictranslate.entity.DictionaryMetaInfo;
 import priv.zxw.dictranslate.translater.DictionaryTranslater;
 import priv.zxw.dictranslate.util.DictionaryWrapperUtils;
 
+import java.lang.reflect.Method;
 import java.util.Iterator;
 import java.util.Objects;
+import java.util.Optional;
 
+@ControllerAdvice
 public class DictionaryResponseBodyAdvice implements ResponseBodyAdvice<Object>, ApplicationContextAware {
 
     private static final Logger log = LoggerFactory.getLogger(DictionaryResponseBodyAdvice.class);
@@ -27,7 +31,13 @@ public class DictionaryResponseBodyAdvice implements ResponseBodyAdvice<Object>,
 
     @Override
     public boolean supports(MethodParameter methodParameter, Class aClass) {
-        return DictionaryBeanPostProcessor.metaInfoMap.containsKey(aClass);
+        Method method = methodParameter.getMethod();
+        if (Objects.isNull(method)) {
+            return false;
+        }
+
+        Class<?> returnType = method.getReturnType();
+        return DictionaryBeanPostProcessor.metaInfoMap.containsKey(returnType);
     }
 
     @Override
