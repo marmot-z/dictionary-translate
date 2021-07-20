@@ -5,7 +5,6 @@ import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.BeanCreationException;
 import org.springframework.beans.factory.config.InstantiationAwareBeanPostProcessor;
 import org.springframework.stereotype.Controller;
-import org.springframework.util.ReflectionUtils;
 import org.springframework.web.bind.annotation.*;
 import priv.zxw.dictranslate.annotation.Dictionary;
 import priv.zxw.dictranslate.converter.DictionaryConverter;
@@ -22,7 +21,12 @@ import java.util.Map;
 
 public class DictionaryBeanPostProcessor implements InstantiationAwareBeanPostProcessor {
 
-    private Map<Class, DictionaryMetaInfo> metaInfoMap = new HashMap<>(10);
+    /**
+     * 字典元信息集合
+     * Class                字典字段所在原始类
+     * DictionaryMetaInfo   字典元信息
+     */
+    public static Map<Class<?>, DictionaryMetaInfo> metaInfoMap = new HashMap<>(10);
 
     @Override
     public boolean postProcessAfterInstantiation(Object bean, String beanName) throws BeansException {
@@ -59,7 +63,7 @@ public class DictionaryBeanPostProcessor implements InstantiationAwareBeanPostPr
     }
 
     private List<Class<?>> getMethodReturnTypes(Class<?> clazz) {
-        Method[] declaredMethods = ReflectionUtils.getDeclaredMethods(clazz);
+        Method[] declaredMethods = clazz.getDeclaredMethods();
 
         List<Class<?>> returnTypes = new ArrayList<>(declaredMethods.length);
         for (Method declaredMethod : declaredMethods) {
@@ -114,6 +118,20 @@ public class DictionaryBeanPostProcessor implements InstantiationAwareBeanPostPr
     }
 
     private DictionaryMetaInfo collectDictionaryInfo(Class<?> returnType) {
-        return null;
+        DictionaryMetaInfo metaInfo = new DictionaryMetaInfo();
+        metaInfo.setOriginClass(returnType);
+
+        Field[] declaredFields = returnType.getDeclaredFields();
+        for (Field declaredField : declaredFields) {
+            if (declaredField.isAnnotationPresent(Dictionary.class)) {
+                Dictionary annotation = declaredField.getAnnotation(Dictionary.class);
+                DictionaryMetaInfo.DictionaryField fieldInfo =
+                        metaInfo.new DictionaryField(declaredField.getName(), annotation.type(), annotation.translater());
+
+                metaInfo.addField(fieldInfo);
+            }
+        }
+
+        return metaInfo;
     }
 }

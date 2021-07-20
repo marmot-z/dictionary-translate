@@ -11,5 +11,5 @@ public interface DictionaryTranslater {
      * @param id    字典唯一标识
      * @return
      */
-    DictionaryEntity translate(Integer type, Integer id);
+    DictionaryEntity translate(Integer type, Long id);
 }

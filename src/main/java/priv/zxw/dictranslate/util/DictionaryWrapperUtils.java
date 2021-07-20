@@ -1,16 +1,23 @@
 package priv.zxw.dictranslate.util;
 
 import javassist.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.util.ReflectionUtils;
+import priv.zxw.dictranslate.annotation.Dictionary;
 import priv.zxw.dictranslate.converter.DictionaryConverter;
 import priv.zxw.dictranslate.entity.DictionaryEntity;
-import priv.zxw.dictranslate.annotation.Dictionary;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.Objects;
 
 import static org.springframework.util.StringUtils.capitalize;
 
 public class DictionaryWrapperUtils {
+
+    private static final Logger log = LoggerFactory.getLogger(DictionaryWrapperUtils.class);
 
     /**
      * 根据bean生成字典包装类
@@ -85,5 +92,51 @@ public class DictionaryWrapperUtils {
         method.setBody(methodBody.toString());
 
         return method;
+    }
+
+    public static Object newInstanceAndFillField(Class<? extends DictionaryConverter> clazz, Object originValue) throws IllegalAccessException, InstantiationException {
+        DictionaryConverter converter = clazz.newInstance();
+        return converter.convert(originValue);
+    }
+
+    public static Long getDictionaryFieldValue(Object obj, String fieldName) {
+        String getterMethodName = "get" + capitalize(fieldName);
+        Method method = ReflectionUtils.findMethod(obj.getClass(), getterMethodName);
+
+        if (Objects.isNull(method)) {
+            log.warn("{}#{}() 方法不存在", obj.getClass().getName(), getterMethodName);
+            return null;
+        }
+
+        Object o = ReflectionUtils.invokeMethod(method, obj);
+        return toLongValue(o);
+    }
+
+    private static Long toLongValue(Object o) {
+        if (Objects.isNull(o)) {
+            return null;
+        }
+
+        if (o instanceof Short) return ((Short) o).longValue();
+        if (o instanceof Integer) return ((Integer) o).longValue();
+        if (o instanceof Long) return (Long) o;
+
+        if (o.getClass().isPrimitive()) {
+            return (long) o;
+        }
+
+        return null;
+    }
+
+    public static void setDictionaryFieldValue(Object obj, String fieldName, DictionaryEntity entity) {
+        String setterMethodName = "set" + capitalize(fieldName);
+        Method method = ReflectionUtils.findMethod(obj.getClass(), setterMethodName, DictionaryEntity.class);
+
+        if (Objects.isNull(method)) {
+            log.warn("{}#{}({}) 方法不存在", obj.getClass().getName(), setterMethodName, entity.getClass().getName());
+            return;
+        }
+
+        ReflectionUtils.invokeMethod(method, obj, entity);
     }
 }
