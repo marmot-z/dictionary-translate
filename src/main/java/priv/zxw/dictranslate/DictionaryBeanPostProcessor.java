@@ -11,6 +11,7 @@ import priv.zxw.dictranslate.annotation.Dictionary;
 import priv.zxw.dictranslate.converter.DictionaryConverter;
 import priv.zxw.dictranslate.entity.DictionaryMetaInfo;
 import priv.zxw.dictranslate.exception.IllegalDictionaryUsageException;
+import priv.zxw.dictranslate.util.ClassParser;
 import priv.zxw.dictranslate.util.DictionaryWrapperUtils;
 
 import java.lang.reflect.Field;
@@ -35,17 +36,18 @@ public class DictionaryBeanPostProcessor implements InstantiationAwareBeanPostPr
     public boolean postProcessAfterInstantiation(Object bean, String beanName) throws BeansException {
         Class<?> clazz = bean.getClass();
 
-        if (!isControllerBean(clazz)) {
+        if (!ClassParser.isControllerBean(clazz)) {
             return true;
         }
 
-        List<Class<?>> returnTypes = getMethodReturnTypes(clazz);
+        Class<?>[] returnTypes = ClassParser.getResponseBodyMethodReturnTypes(clazz);
         for (Class<?> returnType : returnTypes) {
             // 验证
-            valid(returnType);
+            ClassParser.valid(returnType);
 
-            // 收集信息
-            DictionaryMetaInfo metaInfo = collectDictionaryInfo(returnType);
+            // 收集元信息
+            ClassParser.collectDictionaryInfo(returnType, metaInfoMap);
+            DictionaryMetaInfo metaInfo = metaInfoMap.get(returnType);
 
             // 生成对应的包装对象
             try {
@@ -54,96 +56,8 @@ public class DictionaryBeanPostProcessor implements InstantiationAwareBeanPostPr
             } catch (CannotCompileException e) {
                 throw new BeanCreationException("动态创建 " + returnType.getName() + " 的字典包装类失败", e);
             }
-
-            metaInfoMap.put(returnType, metaInfo);
         }
 
         return true;
-    }
-
-    private boolean isControllerBean(Class<?> clazz) {
-        return clazz.isAnnotationPresent(Controller.class) || clazz.isAnnotationPresent(RestController.class);
-    }
-
-    private List<Class<?>> getMethodReturnTypes(Class<?> clazz) {
-        Method[] declaredMethods = clazz.getDeclaredMethods();
-
-        // TODO 解决返回结果为泛型的情况
-        List<Class<?>> returnTypes = new ArrayList<>(declaredMethods.length);
-        for (Method declaredMethod : declaredMethods) {
-            if (isRequestMappingMethod(declaredMethod) &&
-                    hasReturnValue(declaredMethod) && isResponseBody(declaredMethod)) {
-                Class<?> returnType = declaredMethod.getReturnType();
-                if (isDictionaryClass(returnType)) {
-                    returnTypes.add(returnType);
-                }
-            }
-        }
-
-        return returnTypes;
-    }
-
-    private boolean isDictionaryClass(Class<?> returnType) {
-        Field[] declaredFields = returnType.getDeclaredFields();
-        return Stream.of(declaredFields).anyMatch(field -> field.isAnnotationPresent(Dictionary.class));
-    }
-
-    private boolean isRequestMappingMethod(Method declaredMethod) {
-        return declaredMethod.isAnnotationPresent(RequestMapping.class) ||
-                declaredMethod.isAnnotationPresent(GetMapping.class) ||
-                declaredMethod.isAnnotationPresent(PostMapping.class) ||
-                declaredMethod.isAnnotationPresent(PutMapping.class) ||
-                declaredMethod.isAnnotationPresent(DeleteMapping.class);
-    }
-
-    private boolean hasReturnValue(Method declaredMethod) {
-        return !declaredMethod.getReturnType().equals(Void.TYPE);
-    }
-
-    private boolean isResponseBody(Method declaredMethod) {
-        if (declaredMethod.isAnnotationPresent(ResponseBody.class)) {
-            return true;
-        }
-
-        Class<?> declaredClass = declaredMethod.getDeclaringClass();
-        return declaredClass.isAnnotationPresent(RestController.class);
-    }
-
-    private void valid(Class<?> returnType) {
-        Field[] declaredFields = returnType.getDeclaredFields();
-
-        for (Field declaredField : declaredFields) {
-            if (declaredField.isAnnotationPresent(Dictionary.class)) {
-                Class<?> type = declaredField.getType();
-
-                if (!(isNumberType(type))) {
-                    throw new IllegalDictionaryUsageException("@Dictionary 注解只能修饰数值类型字段");
-                }
-            }
-        }
-    }
-
-    private boolean isNumberType(Class<?> clazz) {
-        return clazz == Short.class || clazz == short.class ||
-                clazz == Integer.class || clazz == int.class ||
-                clazz == Long.class || clazz == long.class;
-    }
-
-    private DictionaryMetaInfo collectDictionaryInfo(Class<?> returnType) {
-        DictionaryMetaInfo metaInfo = new DictionaryMetaInfo();
-        metaInfo.setOriginClass(returnType);
-
-        Field[] declaredFields = returnType.getDeclaredFields();
-        for (Field declaredField : declaredFields) {
-            if (declaredField.isAnnotationPresent(Dictionary.class)) {
-                Dictionary annotation = declaredField.getAnnotation(Dictionary.class);
-                DictionaryMetaInfo.DictionaryField fieldInfo =
-                        metaInfo.new DictionaryField(declaredField.getName(), annotation.type(), annotation.translater());
-
-                metaInfo.addField(fieldInfo);
-            }
-        }
-
-        return metaInfo;
     }
 }

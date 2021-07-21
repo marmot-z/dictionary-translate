@@ -94,6 +94,7 @@ class SexEnum {
 - [ ] 支持列表、数组类型字段上的字典翻译
 - [ ] 支持自定义的返回字典格式
 - [ ] 支持嵌套复杂格式类型的字典翻译
+- [ ] 支持自定义配置，包括但不限于默认translater，动态生成class方式
 - [ ] 支持getter方法的字典注解  
 - [ ] 支持groovy方式的生成动态class
 - [ ] 编写成SpringBoot starer
