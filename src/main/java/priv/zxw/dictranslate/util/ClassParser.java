@@ -1,6 +1,7 @@
 package priv.zxw.dictranslate.util;
 
-import com.fasterxml.classmate.GenericType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
 import priv.zxw.dictranslate.annotation.Dictionary;
@@ -10,7 +11,6 @@ import sun.reflect.generics.reflectiveObjects.TypeVariableImpl;
 
 import java.lang.reflect.*;
 import java.util.*;
-import java.util.stream.Stream;
 
 /**
  * class description
@@ -20,86 +20,120 @@ import java.util.stream.Stream;
  */
 public class ClassParser {
 
-    public static boolean isControllerBean(Class<?> clazz) {
+    private static final Logger log = LoggerFactory.getLogger(ClassParser.class);
+
+    public static boolean isControllerAnnotationPresentClass(Class<?> clazz) {
         return clazz.isAnnotationPresent(Controller.class) || clazz.isAnnotationPresent(RestController.class);
     }
 
-    public static Class<?>[] getResponseBodyMethodReturnTypes(Class<?> clazz) {
-        Method[] declaredMethods = clazz.getDeclaredMethods();
-
-        List<Class<?>> returnTypes = new ArrayList<>(declaredMethods.length);
-        for (Method declaredMethod : declaredMethods) {
-            if (isRequestMappingMethod(declaredMethod) &&
-                    hasReturnValue(declaredMethod) && isResponseBody(declaredMethod)) {
+    public static void collectMetaInfoAndValid(Class<?> clazz, Map<String, DictionaryMetaInfo> metaInfoMap) {
+        for (Method declaredMethod : clazz.getDeclaredMethods()) {
+            if (isRequestMappingAnnotationPresentMethod(declaredMethod)
+                    && hasReturnValue(declaredMethod) && isResponseBody(declaredMethod)) {
                 Class<?> returnType = declaredMethod.getReturnType();
+                Map<String, Class<?>> genericNameClassMap = getMethodReturnTypeGenericNameClassMap(declaredMethod);
+                String returnTypeName = getMethodReturnTypeName(declaredMethod);
 
-                Type genericReturnType = declaredMethod.getGenericReturnType();
-                Map<String, Class<?>> genericNameClassMap = null;
-                if (genericReturnType instanceof ParameterizedType) {
-                    // 从method中获取泛型实际参数类型，获取class的泛型对应的字符，得到泛型符号对应的实际参数类型映射关系
-                    Type[] actualTypeArguments = ((ParameterizedType) genericReturnType).getActualTypeArguments();
-                    TypeVariable<? extends Class<?>>[] typeParameters = returnType.getTypeParameters();
+                collectMetaInfo(returnType, returnTypeName, genericNameClassMap, metaInfoMap);
+            }
+        }
+    }
 
-                    if (Objects.nonNull(actualTypeArguments) && actualTypeArguments.length == typeParameters.length) {
-                        genericNameClassMap = new HashMap<>(actualTypeArguments.length);
-                        for (int i = 0, length = actualTypeArguments.length; i < length; i++) {
-                            String genericName = typeParameters[i].getName();
-                            String genericTypeClassFullName = actualTypeArguments[i].getTypeName();
-                            try {
-                                genericNameClassMap.put(genericName, Class.forName(genericTypeClassFullName));
-                            } catch (ClassNotFoundException e) {
-                                throw new RuntimeException(e);
-                            }
-                        }
+    private static Map<String, Class<?>> getMethodReturnTypeGenericNameClassMap(Method declaredMethod) {
+        Class<?> returnType = declaredMethod.getReturnType();
+        Type genericReturnType = declaredMethod.getGenericReturnType();
+
+        if (!returnType.equals(genericReturnType) && (genericReturnType instanceof ParameterizedType)) {
+            // 从method中获取泛型实际参数类型，获取class的泛型对应的字符，得到泛型符号对应的实际参数类型映射关系
+            Type[] actualTypeArguments = ((ParameterizedType) genericReturnType).getActualTypeArguments();
+            TypeVariable<? extends Class<?>>[] typeParameters = returnType.getTypeParameters();
+
+            if (Objects.nonNull(actualTypeArguments) && actualTypeArguments.length == typeParameters.length) {
+                Map<String, Class<?>> genericNameClassMap = new HashMap<>(actualTypeArguments.length);
+
+                for (int i = 0, length = actualTypeArguments.length; i < length; i++) {
+                    String genericName = typeParameters[i].getName();
+                    String genericTypeClassFullName = actualTypeArguments[i].getTypeName();
+                    try {
+                        genericNameClassMap.put(genericName, Class.forName(genericTypeClassFullName));
+                    } catch (ClassNotFoundException e) {
+                        log.error("class {} not found", genericTypeClassFullName, e);
                     }
                 }
 
-                if (isDictionaryAnnotationPresentClass(returnType, genericNameClassMap)) {
-                    returnTypes.add(returnType);
-                }
+                return genericNameClassMap;
             }
         }
 
-        return returnTypes.toArray(new Class<?>[] {});
+        return null;
     }
 
-    private static boolean isDictionaryAnnotationPresentClass(Class<?> clazz, Map<String, Class<?>> genericNameClassMap) {
-        // 只对自定义的class进行字段检查
-        if (isJavaClass(clazz)) {
-            return false;
-        }
+    private static boolean collectMetaInfo(Class<?> clazz, String typeName, Map<String, Class<?>> genericNameClassMap, Map<String, DictionaryMetaInfo> metaInfoMap) {
+        if (isJavaClass(clazz)) return false;
 
+        if (metaInfoMap.containsKey(typeName)) return true;
+
+        DictionaryMetaInfo metaInfo = new DictionaryMetaInfo();
+        metaInfo.setOriginClass(clazz);
+
+        boolean hasDictionaryField = false;
         for (Field declaredField : clazz.getDeclaredFields()) {
-            Class<?> type = declaredField.getType();
+            Class<?> type = getFieldType(declaredField, genericNameClassMap);
 
             if (declaredField.isAnnotationPresent(Dictionary.class)) {
-                return true;
-            }
+                Dictionary annotation = declaredField.getAnnotation(Dictionary.class);
+                // 验证注解使用是否合乎规范
+                valid(annotation, type);
+                metaInfo.addDictionaryField(
+                        metaInfo.new DictionaryField(declaredField.getName(), annotation.type(), annotation.translater()));
 
-            Type fieldGenericType = declaredField.getGenericType();
-            // 泛型字段genericType为 T 之类的类型，type为Object.class
-            if (fieldGenericType != type) {
-                String genericName = ((TypeVariableImpl) fieldGenericType).getName();
-                Class<?> genericClass = genericNameClassMap.get(genericName);
-
-                if (isJavaClass(genericClass)) {
-                    return false;
+                hasDictionaryField = true;
+            } else {
+                if (!isJavaClass(type)) {
+                    // FIXME 使用threadLocal来解决循环嵌套的情况
+                    boolean isDictionaryClass = collectMetaInfo(type, type.getName(), null, metaInfoMap);
+                    if (isDictionaryClass) {
+                        metaInfo.addWrapperFieldType(metaInfo.new WrapperField(declaredField.getName(), type.getName()));
+                        hasDictionaryField = true;
+                        continue;
+                    }
                 }
 
-                if (isDictionaryAnnotationPresentClass(genericClass, genericNameClassMap)) {
-                    return true;
-                }
+                metaInfo.addRegularField(metaInfo.new RegularField(declaredField.getName(), type));
             }
         }
 
-        return false;
+        if (hasDictionaryField) {
+            metaInfoMap.put(typeName, metaInfo);
+        }
+
+        return hasDictionaryField;
+    }
+
+    private static void valid(Dictionary annotation, Class<?> fieldType) {
+        if (!isNumberType(fieldType)) {
+            throw new IllegalDictionaryUsageException("@Dictionary注解只能作用于short,int,long类型字段上");
+        }
+    }
+
+    private static Class<?> getFieldType(Field declaredField, Map<String, Class<?>> genericNameClassMap) {
+        Class<?> type = declaredField.getType();
+        Type genericType = declaredField.getGenericType();
+
+        if (type.equals(genericType)) return type;
+
+        // 根据泛型符号(如 T)查找泛型符号和class对应关系(T -> class)获取泛型实际类型
+        String typeName = ((TypeVariableImpl) genericType).getName();
+        Class<?> actualType = Objects.isNull(genericNameClassMap) ? null : genericNameClassMap.get(typeName);
+
+        return Objects.isNull(actualType) ? type : actualType;
     }
 
     private static boolean isJavaClass(Class<?> clazz) {
-        return clazz.getName().startsWith("java");
+        return clazz.isPrimitive() || clazz.getName().startsWith("java");
     }
 
-    private static boolean isRequestMappingMethod(Method declaredMethod) {
+    private static boolean isRequestMappingAnnotationPresentMethod(Method declaredMethod) {
         return declaredMethod.isAnnotationPresent(RequestMapping.class) ||
                 declaredMethod.isAnnotationPresent(GetMapping.class) ||
                 declaredMethod.isAnnotationPresent(PostMapping.class) ||
@@ -120,43 +154,16 @@ public class ClassParser {
         return declaredClass.isAnnotationPresent(RestController.class);
     }
 
+    public static String getMethodReturnTypeName(Method declaredMethod) {
+        Class<?> returnType = declaredMethod.getReturnType();
+        Type genericReturnType = declaredMethod.getGenericReturnType();
 
-    public static void valid(Class<?> clazz) {
-        Field[] declaredFields = clazz.getDeclaredFields();
-
-        for (Field declaredField : declaredFields) {
-            if (declaredField.isAnnotationPresent(Dictionary.class)) {
-                Class<?> type = declaredField.getType();
-
-                if (!(isNumberType(type))) {
-                    throw new IllegalDictionaryUsageException("@Dictionary 注解只能修饰数值类型字段");
-                }
-            }
-        }
+        return returnType.equals(genericReturnType) ? returnType.getName() : genericReturnType.getTypeName();
     }
 
     private static boolean isNumberType(Class<?> clazz) {
         return clazz == Short.class || clazz == short.class ||
                 clazz == Integer.class || clazz == int.class ||
                 clazz == Long.class || clazz == long.class;
-    }
-
-
-    public static void collectDictionaryInfo(Class<?> clazz, Map<Class<?>, DictionaryMetaInfo> metaInfoMap) {
-        DictionaryMetaInfo metaInfo = new DictionaryMetaInfo();
-        metaInfo.setOriginClass(clazz);
-
-        metaInfoMap.put(clazz, metaInfo);
-
-        Field[] declaredFields = clazz.getDeclaredFields();
-        for (Field declaredField : declaredFields) {
-            if (declaredField.isAnnotationPresent(Dictionary.class)) {
-                Dictionary annotation = declaredField.getAnnotation(Dictionary.class);
-                DictionaryMetaInfo.DictionaryField fieldInfo =
-                        metaInfo.new DictionaryField(declaredField.getName(), annotation.type(), annotation.translater());
-
-                metaInfo.addField(fieldInfo);
-            }
-        }
     }
 }

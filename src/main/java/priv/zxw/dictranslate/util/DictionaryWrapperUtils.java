@@ -4,13 +4,14 @@ import javassist.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.ReflectionUtils;
-import priv.zxw.dictranslate.annotation.Dictionary;
 import priv.zxw.dictranslate.converter.DictionaryConverter;
 import priv.zxw.dictranslate.entity.DictionaryEntity;
+import priv.zxw.dictranslate.entity.DictionaryMetaInfo;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.Iterator;
+import java.util.Map;
 import java.util.Objects;
 
 import static org.springframework.util.StringUtils.capitalize;
@@ -19,37 +20,60 @@ public class DictionaryWrapperUtils {
 
     private static final Logger log = LoggerFactory.getLogger(DictionaryWrapperUtils.class);
 
-    /**
-     * 根据bean生成字典包装类
-     *
-     * @param targetClass   bean class
-     * @return  字典包装类
-     * @throws CannotCompileException   动态生成wrapper class编译失败
-     */
-    public static Class<DictionaryConverter> generateWrapper(Class<?> targetClass) throws CannotCompileException {
+    public static Class<DictionaryConverter> generateWrapper(DictionaryMetaInfo metaInfo, Map<String, DictionaryMetaInfo> metaInfoMap)
+            throws CannotCompileException {
+        if (Objects.nonNull(metaInfo.getWrapperClass())) {
+            return metaInfo.getWrapperClass();
+        }
+
+        Class<?> targetClass = metaInfo.getOriginClass();
         ClassPool pool = ClassPool.getDefault();
         CtClass evalClass = pool.makeClass(getWrapperClassName(targetClass));
         evalClass.addConstructor(generateDefaultConstructor(evalClass));
 
-        Field[] fields = targetClass.getDeclaredFields();
-        for (Field field : fields) {
-            String fieldName = field.getName();
-            Class<?> assignFieldType = field.isAnnotationPresent(Dictionary.class) ? DictionaryEntity.class : field.getType();
-            CtField ctField = CtField.make("private " + assignFieldType.getName() + " " + fieldName + ";", evalClass);
+        Iterator<DictionaryMetaInfo.RegularField> regularFieldIterator = metaInfo.regularFieldIterator();
+        while (regularFieldIterator.hasNext()) {
+            DictionaryMetaInfo.RegularField field = regularFieldIterator.next();
+            addField(field.getFieldName(), field.getFieldType(), evalClass);
+        }
 
-            evalClass.addField(ctField);
-            evalClass.addMethod(CtNewMethod.getter("get" + capitalize(fieldName), ctField));
-            evalClass.addMethod(CtNewMethod.setter("set" + capitalize(fieldName), ctField));
+        Iterator<DictionaryMetaInfo.DictionaryField> dictionaryFieldIterator = metaInfo.dictionaryFieldIterator();
+        while (dictionaryFieldIterator.hasNext()) {
+            DictionaryMetaInfo.DictionaryField field = dictionaryFieldIterator.next();
+            addField(field.getFieldName(), DictionaryEntity.class, evalClass);
+        }
+
+        Iterator<DictionaryMetaInfo.WrapperField> wrapperFieldTypeIterator = metaInfo.wrapperFieldTypeIterator();
+        while (wrapperFieldTypeIterator.hasNext()) {
+            DictionaryMetaInfo.WrapperField wrapperField = wrapperFieldTypeIterator.next();
+            DictionaryMetaInfo fieldMetaInfo = metaInfoMap.get(wrapperField.getFieldTypeName());
+            if (Objects.nonNull(fieldMetaInfo)) {
+                if (Objects.isNull(fieldMetaInfo.getWrapperClass())) {
+                    fieldMetaInfo.setWrapperClass(generateWrapper(fieldMetaInfo, metaInfoMap));
+                }
+
+                addField(wrapperField.getFieldName(), fieldMetaInfo.getWrapperClass(), evalClass);
+            }
         }
 
         try {
             evalClass.setInterfaces(new CtClass[] {pool.get(DictionaryConverter.class.getName())});
-            evalClass.addMethod(generateConvertMethod(pool, evalClass, targetClass));
+            evalClass.addMethod(generateConvertMethod(pool, evalClass, metaInfo));
         } catch (NotFoundException e) {
             throw new RuntimeException(e);
         }
 
         return (Class<DictionaryConverter>) evalClass.toClass();
+    }
+
+    private static void addField(String fieldName, Class<?> fieldType, CtClass evalClass)
+            throws CannotCompileException {
+        CtField ctField = CtField.make("private " + fieldType.getName() + " " + fieldName + ";", evalClass);
+
+        evalClass.addMethod(CtNewMethod.getter("get" + capitalize(fieldName), ctField));
+        evalClass.addMethod(CtNewMethod.setter("set" + capitalize(fieldName), ctField));
+
+        evalClass.addField(ctField);
     }
 
     private static String getWrapperClassName(Class<?> targetClass) {
@@ -62,15 +86,13 @@ public class DictionaryWrapperUtils {
         return cons;
     }
 
-    private static CtMethod generateConvertMethod(ClassPool classPool, CtClass evalClass, Class<?> targetClass)
-            throws CannotCompileException {
+    private static CtMethod generateConvertMethod(ClassPool classPool, CtClass evalClass, DictionaryMetaInfo metaInfo)
+            throws CannotCompileException, NotFoundException {
         String methodName = "convert";
-        CtClass objectClass = null;
-        try {
-            objectClass = classPool.get(Object.class.getName());
-        } catch (NotFoundException neverOccur) {}
-
+        CtClass objectClass = classPool.get(Object.class.getName());
+        Class<?> targetClass = metaInfo.getOriginClass();
         CtMethod method = new CtMethod(objectClass, methodName, new CtClass[]{objectClass}, evalClass);
+
         method.setModifiers(Modifier.PUBLIC);
 
         StringBuilder methodBody = new StringBuilder();
@@ -80,13 +102,13 @@ public class DictionaryWrapperUtils {
                 .append(targetClass.getName()).append(" cast = (").append(targetClass.getName()).append(") $1;")
                 .append(evalClass.getName()).append(" result = ").append(" new ").append(evalClass.getName()).append("();");
 
-        Field[] declaredFields = targetClass.getDeclaredFields();
-        for (Field declaredField : declaredFields) {
-            if (!declaredField.isAnnotationPresent(Dictionary.class)) {
-                String fieldName = declaredField.getName();
-                methodBody.append(" result.set").append(capitalize(fieldName)).append("(cast.get").append(capitalize(fieldName)).append("()); ");
-            }
+        Iterator<DictionaryMetaInfo.RegularField> fieldIterator = metaInfo.regularFieldIterator();
+        while (fieldIterator.hasNext()) {
+            DictionaryMetaInfo.RegularField field = fieldIterator.next();
+            String fieldName = field.getFieldName();
+            methodBody.append(" result.set").append(capitalize(fieldName)).append("(cast.get").append(capitalize(fieldName)).append("()); ");
         }
+
         methodBody.append("return result; }");
 
         method.setBody(methodBody.toString());
@@ -94,12 +116,13 @@ public class DictionaryWrapperUtils {
         return method;
     }
 
-    public static Object newInstanceAndFillField(Class<? extends DictionaryConverter> clazz, Object originValue) throws IllegalAccessException, InstantiationException {
+    public static Object newInstanceAndFillField(Class<? extends DictionaryConverter> clazz, Object originValue)
+            throws IllegalAccessException, InstantiationException {
         DictionaryConverter converter = clazz.newInstance();
         return converter.convert(originValue);
     }
 
-    public static Long getDictionaryFieldValue(Object obj, String fieldName) {
+    public static Object getFieldValue(Object obj, String fieldName) {
         String getterMethodName = "get" + capitalize(fieldName);
         Method method = ReflectionUtils.findMethod(obj.getClass(), getterMethodName);
 
@@ -108,11 +131,10 @@ public class DictionaryWrapperUtils {
             return null;
         }
 
-        Object o = ReflectionUtils.invokeMethod(method, obj);
-        return toLongValue(o);
+        return ReflectionUtils.invokeMethod(method, obj);
     }
 
-    private static Long toLongValue(Object o) {
+    public static Long toLongValue(Object o) {
         if (Objects.isNull(o)) {
             return null;
         }
@@ -128,15 +150,15 @@ public class DictionaryWrapperUtils {
         return null;
     }
 
-    public static void setDictionaryFieldValue(Object obj, String fieldName, DictionaryEntity entity) {
+    public static void setFieldValue(Object obj, String fieldName, Object value) {
         String setterMethodName = "set" + capitalize(fieldName);
-        Method method = ReflectionUtils.findMethod(obj.getClass(), setterMethodName, DictionaryEntity.class);
+        Method method = ReflectionUtils.findMethod(obj.getClass(), setterMethodName, value.getClass());
 
         if (Objects.isNull(method)) {
-            log.warn("{}#{}({}) 方法不存在", obj.getClass().getName(), setterMethodName, entity.getClass().getName());
+            log.warn("{}#{}({}) 方法不存在", obj.getClass().getName(), setterMethodName, value.getClass().getName());
             return;
         }
 
-        ReflectionUtils.invokeMethod(method, obj, entity);
+        ReflectionUtils.invokeMethod(method, obj, value);
     }
 }

@@ -15,12 +15,12 @@ import priv.zxw.dictranslate.converter.DictionaryConverter;
 import priv.zxw.dictranslate.entity.DictionaryEntity;
 import priv.zxw.dictranslate.entity.DictionaryMetaInfo;
 import priv.zxw.dictranslate.translater.DictionaryTranslater;
+import priv.zxw.dictranslate.util.ClassParser;
 import priv.zxw.dictranslate.util.DictionaryWrapperUtils;
 
 import java.lang.reflect.Method;
 import java.util.Iterator;
 import java.util.Objects;
-import java.util.Optional;
 
 @ControllerAdvice
 public class DictionaryResponseBodyAdvice implements ResponseBodyAdvice<Object>, ApplicationContextAware {
@@ -36,8 +36,8 @@ public class DictionaryResponseBodyAdvice implements ResponseBodyAdvice<Object>,
             return false;
         }
 
-        Class<?> returnType = method.getReturnType();
-        return DictionaryBeanPostProcessor.metaInfoMap.containsKey(returnType);
+        String returnTypeName = ClassParser.getMethodReturnTypeName(method);
+        return DictionaryBeanPostProcessor.metaInfoMap.containsKey(returnTypeName);
     }
 
     @Override
@@ -51,37 +51,66 @@ public class DictionaryResponseBodyAdvice implements ResponseBodyAdvice<Object>,
             return o;
         }
 
-        DictionaryMetaInfo metaInfo = DictionaryBeanPostProcessor.metaInfoMap.get(o.getClass());
-        if (Objects.isNull(metaInfo)) {
-            log.warn("{} 对应的字典元信息为空", o.getClass());
+        Method method = methodParameter.getMethod();
+        if (Objects.isNull(method)) {
             return o;
+        }
+
+        String returnTypeName = ClassParser.getMethodReturnTypeName(method);
+        return assignValue(o, returnTypeName);
+    }
+
+    private Object assignValue(Object origin, String typeName) {
+        DictionaryMetaInfo metaInfo = DictionaryBeanPostProcessor.metaInfoMap.get(typeName);
+        if (Objects.isNull(metaInfo)) {
+            log.warn("{} 对应的字典元信息为空", typeName);
+            return origin;
         }
 
         Object wrapper;
         Class<? extends DictionaryConverter> wrapperClass = metaInfo.getWrapperClass();
         try {
-            wrapper = DictionaryWrapperUtils.newInstanceAndFillField(wrapperClass, o);
+            wrapper = DictionaryWrapperUtils.newInstanceAndFillField(wrapperClass, origin);
         } catch (IllegalAccessException | InstantiationException e) {
             log.warn("创建 {} 字典包装对象失败", wrapperClass, e);
-            return o;
+            return origin;
         }
 
-        Iterator<DictionaryMetaInfo.DictionaryField> iterator = metaInfo.fieldIterator();
-        while (iterator.hasNext()) {
-            DictionaryMetaInfo.DictionaryField field = iterator.next();
+        Iterator<DictionaryMetaInfo.DictionaryField> dictionaryFieldIterator = metaInfo.dictionaryFieldIterator();
+        while (dictionaryFieldIterator.hasNext()) {
+            DictionaryMetaInfo.DictionaryField field = dictionaryFieldIterator.next();
             DictionaryEntity entity;
             try {
-                Long id = DictionaryWrapperUtils.getDictionaryFieldValue(o, field.getFieldName());
+                Long id = DictionaryWrapperUtils.toLongValue(DictionaryWrapperUtils.getFieldValue(origin, field.getFieldName()));
                 entity = translate(field, id);
             } catch (Exception e) {
-                log.warn("获取 {}#{} 字段值失败", o.getClass().getName(), field.getFieldName(), e);
+                log.warn("获取 {}#{} 字段值失败", origin.getClass().getName(), field.getFieldName(), e);
                 entity = new DictionaryEntity(null, field.getType());
             }
 
             try {
-                DictionaryWrapperUtils.setDictionaryFieldValue(wrapper, field.getFieldName(), entity);
+                DictionaryWrapperUtils.setFieldValue(wrapper, field.getFieldName(), entity);
             } catch (Exception e) {
-                log.error("设置 {}#{} 字段值失败", o.getClass().getName(), field.getFieldName(), e);
+                log.error("设置 {}#{} 字段值失败", origin.getClass().getName(), field.getFieldName(), e);
+            }
+        }
+
+        Iterator<DictionaryMetaInfo.WrapperField> wrapperFieldIterator = metaInfo.wrapperFieldTypeIterator();
+        while (wrapperFieldIterator.hasNext()) {
+            DictionaryMetaInfo.WrapperField wrapperField = wrapperFieldIterator.next();
+            Object fieldValue;
+            try {
+                fieldValue = DictionaryWrapperUtils.getFieldValue(origin, wrapperField.getFieldName());
+            } catch (Exception e) {
+                log.warn("获取 {}#{} 字段值失败", origin.getClass().getName(), wrapperField.getFieldName(), e);
+                continue;
+            }
+            Object fieldWrapperValue = assignValue(fieldValue, wrapperField.getFieldTypeName());
+
+            try {
+                DictionaryWrapperUtils.setFieldValue(wrapper, wrapperField.getFieldName(), fieldWrapperValue);
+            } catch (Exception e) {
+                log.error("设置 {}#{} 字段值失败", origin.getClass().getName(), wrapperField.getFieldName(), e);
             }
         }
 
