@@ -7,12 +7,12 @@ public final class DictionaryEntity {
 
     public DictionaryEntity() {}
 
-    public DictionaryEntity(Long id, Integer type) {
+    public DictionaryEntity(Integer type, Long id) {
         this.id = id;
         this.type = type;
     }
 
-    public DictionaryEntity(Long id, Integer type, String value) {
+    public DictionaryEntity(Integer type, Long id, String value) {
         this.id = id;
         this.type = type;
         this.value = value;

@@ -16,7 +16,7 @@ public class EnumDictionaryTranslater implements DictionaryTranslater {
 
     @Override
     public DictionaryEntity translate(Integer type, Long id) {
-        DictionaryEntity entity = new DictionaryEntity(id, type);
+        DictionaryEntity entity = new DictionaryEntity(type, id);
 
         DemoEnum e = DemoEnum.get(id.intValue());
         entity.setValue(e.getValue());

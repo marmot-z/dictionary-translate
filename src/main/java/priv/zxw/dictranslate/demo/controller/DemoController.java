@@ -28,8 +28,8 @@ public class DemoController {
     public RestResult<SampleResult> method2() {
         SampleResult sampleResult = new SampleResult();
         sampleResult.setAge(233);
-        sampleResult.setCommonName("名称233");
-        sampleResult.setEnumId(1);
+        sampleResult.setCommonName("名称433");
+        sampleResult.setEnumId(2);
         return new RestResult<>(sampleResult);
     }
 }

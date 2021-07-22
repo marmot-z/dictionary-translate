@@ -14,7 +14,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 
-@Component
 public class DictionaryBeanPostProcessor implements InstantiationAwareBeanPostProcessor {
 
     /**

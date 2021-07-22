@@ -85,7 +85,7 @@ public class DictionaryResponseBodyAdvice implements ResponseBodyAdvice<Object>,
                 entity = translate(field, id);
             } catch (Exception e) {
                 log.warn("获取 {}#{} 字段值失败", origin.getClass().getName(), field.getFieldName(), e);
-                entity = new DictionaryEntity(null, field.getType());
+                entity = new DictionaryEntity(field.getType(), null);
             }
 
             try {
@@ -119,7 +119,7 @@ public class DictionaryResponseBodyAdvice implements ResponseBodyAdvice<Object>,
 
     private DictionaryEntity translate(DictionaryMetaInfo.DictionaryField field, Long id) {
         if (Objects.isNull(id)) {
-            return new DictionaryEntity(null, field.getType());
+            return new DictionaryEntity(field.getType(), null);
         }
 
         DictionaryTranslater translater = getTranslater(field.getTranslaterClass());

@@ -6,10 +6,22 @@
 3. 不能和spring比较好的融合。可以ResponseBodyAdvice进行字典翻译逻辑处理(而不是使用额外的切面)。使用spring的序列化方式，而不是手动指定fastjson进行序列化。
 4. 不能翻译嵌套格式的对象
 
-### 使用
+### 本组件的使用
+启动类加上`@EnableDictionaryTranslate`启用字典翻译的功能
+```java
+@SpringBootApplication
+@EnableDictionaryTranslate
+class Application {
+   public static void main(String[] args) {
+      SpringApplication.run(Application.class, args);
+   }
+}
+```
 在响应结果类中为字典字段加上`@Dictionary`注解
 ```java
 class Demo {
+    // 当@EnableDictionaryTranslate注解指定了defaultTranslater属性值时
+    // @Dictionary可不用指定translater属性值
     @Dictionary(type= 1, translater = SexEnumDictionaryTranslater.class)
     private Integer sex;
     
@@ -98,4 +110,5 @@ class SexEnum {
 - [ ] 支持自定义配置，包括但不限于默认translater，动态生成class方式
 - [ ] 支持getter方法的字典注解  
 - [ ] 支持groovy方式的生成动态class
-- [ ] 编写成SpringBoot starer
+- [X] 编写成SpringBoot starer
+- [ ] 使用Spring Util重构代码

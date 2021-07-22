@@ -4,9 +4,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
+import priv.zxw.dictranslate.DictionaryTranslateConfigurationSelector;
 import priv.zxw.dictranslate.annotation.Dictionary;
 import priv.zxw.dictranslate.entity.DictionaryMetaInfo;
 import priv.zxw.dictranslate.exception.IllegalDictionaryUsageException;
+import priv.zxw.dictranslate.translater.DictionaryTranslater;
+import priv.zxw.dictranslate.translater.NoopDictionaryTranslater;
 import sun.reflect.generics.reflectiveObjects.TypeVariableImpl;
 
 import java.lang.reflect.*;
@@ -57,7 +60,7 @@ public class ClassParser {
                     try {
                         genericNameClassMap.put(genericName, Class.forName(genericTypeClassFullName));
                     } catch (ClassNotFoundException e) {
-                        log.error("class {} not found", genericTypeClassFullName, e);
+                        log.warn("class {} not found", genericTypeClassFullName);
                     }
                 }
 
@@ -84,8 +87,13 @@ public class ClassParser {
                 Dictionary annotation = declaredField.getAnnotation(Dictionary.class);
                 // 验证注解使用是否合乎规范
                 valid(annotation, type);
+
+                // 使用字段指定的translater或者全局默认的defaultTranslater
+                Class<? extends DictionaryTranslater> translater = isNoopDictionaryTranslater(annotation.translater()) ?
+                        DictionaryTranslateConfigurationSelector.defaultTranslaterClass :
+                        annotation.translater();
                 metaInfo.addDictionaryField(
-                        metaInfo.new DictionaryField(declaredField.getName(), annotation.type(), annotation.translater()));
+                        metaInfo.new DictionaryField(declaredField.getName(), annotation.type(), translater));
 
                 hasDictionaryField = true;
             } else {
@@ -111,9 +119,19 @@ public class ClassParser {
     }
 
     private static void valid(Dictionary annotation, Class<?> fieldType) {
+        Class<? extends DictionaryTranslater> translaterClass = annotation.translater();
+        if (isNoopDictionaryTranslater(translaterClass) &&
+                isNoopDictionaryTranslater(DictionaryTranslateConfigurationSelector.defaultTranslaterClass)) {
+            throw new IllegalDictionaryUsageException("需指定@Dictionary注解translater属性");
+        }
+
         if (!isNumberType(fieldType)) {
             throw new IllegalDictionaryUsageException("@Dictionary注解只能作用于short,int,long类型字段上");
         }
+    }
+
+    private static boolean isNoopDictionaryTranslater(Class<? extends DictionaryTranslater> clazz) {
+        return NoopDictionaryTranslater.class.equals(clazz);
     }
 
     private static Class<?> getFieldType(Field declaredField, Map<String, Class<?>> genericNameClassMap) {

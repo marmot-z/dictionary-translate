@@ -8,8 +8,8 @@ package priv.zxw.dictranslate.demo.entity;
  */
 public enum DemoEnum {
     FIRSET(1, "第一个"),
-    SECOND(1, "第一个"),
-    THREE(1, "第一个");
+    SECOND(2, "第二个"),
+    THREE(3, "第三个");
 
     private int code;
     private String value;
